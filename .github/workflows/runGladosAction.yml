@@ -10,6 +10,7 @@ on:
 
 permissions:
   # 允许 GITHUB_TOKEN 在末尾 commit & push points_log.json
+  actions: read
   contents: write
 
 jobs:
