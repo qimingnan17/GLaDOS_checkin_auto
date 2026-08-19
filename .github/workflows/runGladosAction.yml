@@ -10,7 +10,6 @@ on:
 
 permissions:
   # 允许 GITHUB_TOKEN 在末尾 commit & push points_log.json
-  actions: read
   contents: write
 
 jobs:
@@ -41,6 +40,7 @@ jobs:
         env:
           GLADOS_COOKIE: "${{ secrets.GLADOS_COOKIE }}"
           WXPUSHER_SPT: ${{ secrets.WXPUSHER_SPT }}
+          DEFAULT_CURRENT_POINTS: "281"
       # 兜底持久化：把积分记录提交回仓库，避免 cache 被清理后数据丢失
       - name: Commit points log
         run: |
