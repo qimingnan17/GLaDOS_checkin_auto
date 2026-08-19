@@ -1,0 +1,17 @@
+{
+  "slss12@qq.com": {
+    "total_points": 0,
+    "checkin_count": 1,
+    "last_checkin_date": "2026-08-19",
+    "last_points": 0,
+    "left_days": "349",
+    "recent": [
+      {
+        "date": "2026-08-19",
+        "points": 0,
+        "left_days": "349",
+        "message": "Today's observation logged. Return tomorrow for more points."
+      }
+    ]
+  }
+}
