@@ -11,6 +11,12 @@
         "points": 0,
         "left_days": "349",
         "message": "Today's observation logged. Return tomorrow for more points."
+      },
+      {
+        "date": "2026-08-19",
+        "points": 0,
+        "left_days": "349",
+        "message": "Today's observation logged. Return tomorrow for more points."
       }
     ]
   }
