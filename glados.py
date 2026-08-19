@@ -162,14 +162,14 @@ if __name__ == '__main__':
             points_data[email] = record
 
             print(email+'----结果--'+mess+'----剩余('+time+')天----本次('+str(gained)+')----累计('+str(record['total_points'])+')')  # 日志输出
-            sendContent += email+'----'+mess+'----剩余('+time+')天----本次('+str(gained)+')----累计('+str(record['total_points'])+')\n'
+            sendContent += '<div style="margin:8px 0;padding:8px;border-radius:4px;background:#f0f9ff;border-left:3px solid #52c41a;"><p style="margin:4px 0;font-weight:bold;">' + email + '</p><p style="margin:2px 0;">' + mess + '</p><p style="margin:2px 0;color:#666;font-size:13px;">剩余 ' + time + ' 天 | 本次 +' + str(gained) + ' | 累计 ' + str(record['total_points']) + '</p></div>\n'
         else:
-            send_push('<p>' + email + ' Cookie已失效，请尽快更新</p>', 'GLaDOS Cookie失效')
+            send_push('<div style="color:red;padding:8px;border-left:3px solid red;background:#fff0f0;border-radius:4px;">' + email + ' Cookie已失效，请尽快更新</div>', 'GLaDOS Cookie失效')
             print('cookie已失效')  # 日志输出
      #--------------------------------------------------------------------------------------------------------#   
     # 持久化积分记录（cache 命中时由 post-run 保存；同时由 workflow 末尾的 git commit 兜底）
     save_points(points_data)
     if sendContent:
         # 纯文本换行转 HTML <br>，加 H3 标题
-        html_content = '<h3>GLaDOS 签到报告</h3>' + sendContent.replace('\n', '<br>')
+        html_content = '<h3>GLaDOS 签到报告</h3>' + sendContent
         send_push(html_content, 'GLaDOS 签到报告')
