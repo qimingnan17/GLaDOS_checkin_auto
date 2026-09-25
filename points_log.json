@@ -68,5 +68,21 @@
       }
     ],
     "current_points": 630
+  },
+  "未知账号": {
+    "total_points": 0,
+    "checkin_count": 1,
+    "last_checkin_date": "2026-09-25",
+    "last_points": 0,
+    "left_days": "?",
+    "current_points": 281,
+    "recent": [
+      {
+        "date": "2026-09-25",
+        "points": 0,
+        "left_days": "?",
+        "message": "没有权限"
+      }
+    ]
   }
 }
