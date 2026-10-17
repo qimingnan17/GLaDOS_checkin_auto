@@ -1,11 +1,17 @@
 {
   "slss12@qq.com": {
-    "total_points": 506,
-    "checkin_count": 56,
-    "last_checkin_date": "2026-10-16",
-    "last_points": 9,
-    "left_days": "391",
+    "total_points": 517,
+    "checkin_count": 57,
+    "last_checkin_date": "2026-10-17",
+    "last_points": 11,
+    "left_days": "390",
     "recent": [
+      {
+        "date": "2026-10-17",
+        "points": 11,
+        "left_days": "390",
+        "message": "签到成功！获得 11 积分"
+      },
       {
         "date": "2026-10-16",
         "points": 9,
@@ -59,15 +65,9 @@
         "points": 0,
         "left_days": "399",
         "message": "Submarine cable data not ready. Please try again in a moment."
-      },
-      {
-        "date": "2026-10-07",
-        "points": 10,
-        "left_days": "400",
-        "message": "签到成功！获得 10 积分"
       }
     ],
-    "current_points": 295
+    "current_points": 306
   },
   "未知账号": {
     "total_points": 0,
