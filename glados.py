@@ -1,13 +1,28 @@
-import requests, json, os, re
+import requests, json, os, re, sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
-# 积分记录文件路径（同目录下），由 actions/cache 恢复 + git commit 兜底
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# 积分记录文件路径（同目录下），由 git checkout 恢复 + git commit 兜底
 POINTS_LOG_FILE = "points_log.json"
 # 每个账号保留最近 N 条签到明细，避免文件无限增长
 MAX_HISTORY = 10
 # 当前剩余积分初始值（首次记录或字段缺失时使用）
 # 可通过工作流环境变量 DEFAULT_CURRENT_POINTS 覆盖
 DEFAULT_CURRENT_POINTS = int(os.environ.get("DEFAULT_CURRENT_POINTS", "281"))
+# 单次 HTTP 请求超时时间，避免 runner 被卡死
+REQUEST_TIMEOUT = 15
+# 业务日期固定使用北京时间，避免 UTC 日期导致跨天统计偏差
+BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
+
+GLADOS_CHECKIN_URL = "https://glados.rocks/api/user/checkin"
+GLADOS_STATUS_URL = "https://glados.rocks/api/user/status"
+GLADOS_REFERER = "https://glados.rocks/console/checkin"
+GLADOS_ORIGIN = "https://glados.rocks"
+GLADOS_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
+GLADOS_PAYLOAD = {"token": "glados.one"}
 
 
 def extract_points(message):
@@ -28,7 +43,9 @@ def load_points():
         with open(POINTS_LOG_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as e:
+        # 解析失败时给出明确信号，避免静默清空历史记录
+        print(f"读取 {POINTS_LOG_FILE} 失败，将重新初始化: {e}")
         return {}
 
 
@@ -36,6 +53,38 @@ def save_points(data):
     """写入积分记录到本地文件。"""
     with open(POINTS_LOG_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def build_session():
+    """创建带连接池和自动重试的 HTTP session。"""
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=0.5,
+        status_forcelist=(500, 502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def build_headers(cookie, json_body=False):
+    """按账号构造请求头。"""
+    headers = {
+        'cookie': cookie,
+        'referer': GLADOS_REFERER,
+        'origin': GLADOS_ORIGIN,
+        'user-agent': GLADOS_USER_AGENT,
+    }
+    if json_body:
+        headers['content-type'] = 'application/json;charset=UTF-8'
+    return headers
 
 
 def new_record():
@@ -117,85 +166,105 @@ def send_push(content, summary="", content_type=2):
 # github workflows
 # -------------------------------------------------------------------------------------------
 if __name__ == '__main__':
-# WxPusher SPT（simplePushToken）申请地址 https://wxpusher.zjiecode.com
-# 由 send_push 函数内部读取环境变量 WXPUSHER_SPT 推送
-# 推送内容
+    # WxPusher SPT（simplePushToken）申请地址 https://wxpusher.zjiecode.com
+    # 由 send_push 函数内部读取环境变量 WXPUSHER_SPT 推送
     sendContent = ''
-# glados账号cookie 直接使用数组 如果使用环境变量需要字符串分割一下
-    cookies = os.environ.get("GLADOS_COOKIE", "").split("&")
-    if cookies[0] == "":
-        print('未获取到COOKIE变量') 
-        cookies = []
-        exit(0)
-    url= "https://glados.rocks/api/user/checkin"
-    url2= "https://glados.rocks/api/user/status"
-    referer = 'https://glados.rocks/console/checkin'
-    origin = "https://glados.rocks"
-    useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
-    payload={
-        'token': 'glados.one'
-    }
+    # glados账号cookie 直接使用数组；环境变量用 & 分割，过滤空项
+    cookies = [c.strip() for c in os.environ.get("GLADOS_COOKIE", "").split("&") if c.strip()]
+    if not cookies:
+        print('未获取到COOKIE变量')
+        sys.exit(0)
 
-    # 读取历史积分记录（由 actions/cache 恢复或 git checkout 兜底）
+    # 读取历史积分记录（由 git checkout 恢复，workflow 末尾 git commit 兜底）
     points_data = load_points()
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.now(BUSINESS_TZ).strftime('%Y-%m-%d')
+    session = build_session()
 
-    for cookie in cookies:
-        checkin = requests.post(url,headers={'cookie': cookie ,'referer': referer,'origin':origin,'user-agent':useragent,'content-type':'application/json;charset=UTF-8'},data=json.dumps(payload))
-        state =  requests.get(url2,headers={'cookie': cookie ,'referer': referer,'origin':origin,'user-agent':useragent})
-    #--------------------------------------------------------------------------------------------------------#
-        try:
-            time = state.json()['data']['leftDays']
-            time = time.split('.')[0]
-            email = state.json()['data']['email']
-        except (KeyError, ValueError, TypeError):
-            # Cookie 完全失效，状态接口无法返回正常数据
+    try:
+        for cookie in cookies:
             email = '未知账号'
-            time = '?'
-        if 'message' in checkin.text:
-            checkin_json = checkin.json()
-            mess_raw = checkin_json.get('message', '')
-            # 汉化展示用文案，日志/推送/历史记录都用汉化版
-            mess = translate_mess(mess_raw)
-            record = points_data.get(email, new_record())
-            # 兼容旧记录：缺少 current_points 字段时初始化为默认值
-            if 'current_points' not in record:
-                record['current_points'] = DEFAULT_CURRENT_POINTS
-            # 从签到返回的 list 提取本次积分和当前余额，取不到则回退正则
-            checkin_list = checkin_json.get('list', [])
-            if checkin_list:
-                try:
-                    gained = int(float(checkin_list[0].get('change', 0)))
-                except (ValueError, TypeError):
-                    gained = extract_points(mess_raw)
-                try:
-                    record['current_points'] = int(float(checkin_list[0].get('balance', record['current_points'])))
-                except (ValueError, TypeError):
-                    pass
-            else:
-                gained = extract_points(mess_raw)
-            # 防止同一天重复运行被多算（重复签到时 gained 通常已为 0，此处再加一层日期兜底）
-            if record.get('last_checkin_date') != today:
-                record['total_points'] = record.get('total_points', 0) + gained
-                record['checkin_count'] = record.get('checkin_count', 0) + 1
-            record['last_checkin_date'] = today
-            record['last_points'] = gained
-            record['left_days'] = time
-            recent = record.get('recent', [])
-            recent.insert(0, {'date': today, 'points': gained, 'left_days': time, 'message': mess})
-            if len(recent) > MAX_HISTORY:
-                recent = recent[:MAX_HISTORY]
-            record['recent'] = recent
-            points_data[email] = record
+            left_days = '?'
+            try:
+                checkin = session.post(
+                    GLADOS_CHECKIN_URL,
+                    headers=build_headers(cookie, json_body=True),
+                    data=json.dumps(GLADOS_PAYLOAD),
+                    timeout=REQUEST_TIMEOUT,
+                )
+                state = session.get(
+                    GLADOS_STATUS_URL,
+                    headers=build_headers(cookie),
+                    timeout=REQUEST_TIMEOUT,
+                )
 
-            print(email+'----结果--'+mess+'----剩余('+time+')天----本次('+str(gained)+')----当前余额('+str(record['current_points'])+')')  # 日志输出
-            sendContent += email+'----'+mess+'----剩余('+time+')天----本次('+str(gained)+')----当前余额('+str(record['current_points'])+')\n'
-        else:
-            send_push('<p>' + email + ' Cookie已失效，请尽快更新</p>', 'GLaDOS Cookie失效')
-            print('cookie已失效')  # 日志输出
-     #--------------------------------------------------------------------------------------------------------#   
-    # 持久化积分记录（cache 命中时由 post-run 保存；同时由 workflow 末尾的 git commit 兜底）
-    save_points(points_data)
+                try:
+                    state_json = state.json()
+                except ValueError:
+                    state_json = {}
+                state_data = state_json.get('data') if isinstance(state_json.get('data'), dict) else {}
+                raw_left_days = state_data.get('leftDays')
+                if raw_left_days is not None:
+                    left_days = str(raw_left_days).split('.')[0]
+                email = state_data.get('email') or email
+
+                try:
+                    checkin_json = checkin.json()
+                except ValueError:
+                    checkin_json = None
+
+                if checkin.ok and isinstance(checkin_json, dict) and 'message' in checkin_json:
+                    mess_raw = checkin_json.get('message', '')
+                    # 汉化展示用文案，日志/推送/历史记录都用汉化版
+                    mess = translate_mess(mess_raw)
+                    record = points_data.get(email, new_record())
+                    # 兼容旧记录：缺少 current_points 字段时初始化为默认值
+                    if 'current_points' not in record:
+                        record['current_points'] = DEFAULT_CURRENT_POINTS
+                    # 从签到返回的 list 提取本次积分和当前余额，取不到则回退正则
+                    checkin_list = checkin_json.get('list', [])
+                    first_item = checkin_list[0] if isinstance(checkin_list, list) and checkin_list and isinstance(checkin_list[0], dict) else {}
+                    if first_item:
+                        try:
+                            gained = int(float(first_item.get('change', 0)))
+                        except (ValueError, TypeError):
+                            gained = extract_points(mess_raw)
+                        try:
+                            record['current_points'] = int(float(first_item.get('balance', record['current_points'])))
+                        except (ValueError, TypeError):
+                            pass
+                    else:
+                        gained = extract_points(mess_raw)
+                    # 防止同一天重复运行被多算（重复签到时 gained 通常已为 0，此处再加一层日期兜底）
+                    if record.get('last_checkin_date') != today:
+                        record['total_points'] = record.get('total_points', 0) + gained
+                        record['checkin_count'] = record.get('checkin_count', 0) + 1
+                    record['last_checkin_date'] = today
+                    record['last_points'] = gained
+                    record['left_days'] = left_days
+                    recent = record.get('recent', [])
+                    recent.insert(0, {'date': today, 'points': gained, 'left_days': left_days, 'message': mess})
+                    if len(recent) > MAX_HISTORY:
+                        recent = recent[:MAX_HISTORY]
+                    record['recent'] = recent
+                    points_data[email] = record
+
+                    print(email+'----结果--'+mess+'----剩余('+left_days+')天----本次('+str(gained)+')----当前余额('+str(record['current_points'])+')')  # 日志输出
+                    sendContent += email+'----'+mess+'----剩余('+left_days+')天----本次('+str(gained)+')----当前余额('+str(record['current_points'])+')\n'
+                else:
+                    send_push('<p>' + email + ' Cookie已失效，请尽快更新</p>', 'GLaDOS Cookie失效')
+                    print(email + '----cookie已失效')  # 日志输出
+            except requests.RequestException as e:
+                # 单个账号网络失败不影响其他账号和最终持久化
+                print(email + '----请求异常----' + str(e))
+                sendContent += email + '----请求异常----' + str(e) + '\n'
+            except Exception as e:
+                # 单个账号数据异常不影响其他账号和最终持久化
+                print(email + '----处理异常----' + str(e))
+                sendContent += email + '----处理异常----' + str(e) + '\n'
+    finally:
+        # 无论中途是否异常，都先保存已成功处理的账号记录
+        save_points(points_data)
+
     if sendContent:
         # 纯文本换行转 HTML <br>，加 H3 标题
         html_content = '<h3>GLaDOS 签到报告</h3>' + sendContent.replace('\n', '<br>')

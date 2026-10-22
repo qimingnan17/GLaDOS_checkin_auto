@@ -12,28 +12,25 @@ permissions:
   # 允许 GITHUB_TOKEN 在末尾 commit & push points_log.json
   contents: write
 
+# 同一时刻只允许一个签到任务运行，避免并发提交导致 push 冲突
+concurrency:
+  group: glados-checkin
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Set up Python 3.9
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: 3.9
+          python-version: "3.12"
       - name: Install requirements
         run: |
           python -m pip install --upgrade pip
-          pip install requests
-      # 恢复历史积分记录（cache 7天未访问会被清理，故下方 git commit 作为兜底）
-      - name: Restore points log cache
-        uses: actions/cache@v5
-        with:
-          # 每次运行用唯一 key 强制 miss 但会保存新缓存；restore-keys 按前缀恢复上一次的
-          path: points_log.json
-          key: glados-points-log-${{ github.run_id }}
-          restore-keys: |
-            glados-points-log-
+          pip install "requests>=2.32,<3"
+      # 历史积分记录直接由 checkout 恢复，无需 cache；末尾仍用 git commit 兜底
       - name: Run checkin
         run: |
           python3 glados.py
@@ -41,11 +38,13 @@ jobs:
           GLADOS_COOKIE: "${{ secrets.GLADOS_COOKIE }}"
           WXPUSHER_SPT: ${{ secrets.WXPUSHER_SPT }}
           DEFAULT_CURRENT_POINTS: "281"
-      # 兜底持久化：把积分记录提交回仓库，避免 cache 被清理后数据丢失
+      # 兜底持久化：把积分记录提交回仓库，避免运行环境清理后数据丢失
       - name: Commit points log
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add points_log.json
           git diff --cached --quiet || git commit -m "chore: update points log [skip ci]"
+          # 先 rebase 远端可能的提交，避免非 fast-forward 导致 push 失败
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push
